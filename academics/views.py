@@ -1,64 +1,100 @@
 import csv
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q
+from django.db.models import Avg, Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404,redirect,render
-from .forms import StudentForm,SubjectForm,AssessmentForm
-from .models import Student,Subject,Assessment
+from .forms import StudentForm,SubjectForm,MarkForm,AttendanceForm
+from .models import Student,Subject,Mark,Attendance
+
 @login_required
 def dashboard(request):
- students=Student.objects.filter(is_active=True); assessments=Assessment.objects.select_related("student","subject")
- rows=list(assessments); avg=round(sum(a.percentage for a in rows)/len(rows),2) if rows else 0
- passrate=round(sum(a.passed for a in rows)/len(rows)*100,1) if rows else 0
- subjects=[]
- for s in Subject.objects.all():
-  sr=[a.percentage for a in rows if a.subject_id==s.id]; subjects.append((s.name,round(sum(sr)/len(sr),2) if sr else 0))
- perstudent=[]
- for st in students:
-  sr=[a.percentage for a in rows if a.student_id==st.id]
-  if sr: perstudent.append((st,round(sum(sr)/len(sr),2),len(sr)))
- top=sorted(perstudent,key=lambda x:x[1],reverse=True)[:5]
- return render(request,"academics/dashboard.html",{"total_students":students.count(),"total_subjects":Subject.objects.count(),"total_assessments":len(rows),"overall_average":avg,"pass_rate":passrate,"subject_labels":[x[0] for x in subjects],"subject_values":[x[1] for x in subjects],"student_labels":[x[0].student_id for x in top],"student_values":[x[1] for x in top],"top_students":top,"recent":rows[:10]})
+    students=Student.objects.filter(is_active=True); marks=list(Mark.objects.select_related("student","subject")); attendance=Attendance.objects.all()
+    average=sum(m.percentage for m in marks)/len(marks) if marks else 0
+    pass_rate=sum(1 for m in marks if m.passed)/len(marks)*100 if marks else 0
+    att_total=attendance.count(); att_rate=attendance.filter(status="PRESENT").count()/att_total*100 if att_total else 0
+    subject_rows=[]
+    for sub in Subject.objects.all():
+        vals=[m.percentage for m in marks if m.subject_id==sub.id]
+        subject_rows.append((sub.name,round(sum(vals)/len(vals),1) if vals else 0))
+    grades={g:0 for g in ["A+","A","B","C","D","E","F"]}
+    for m in marks: grades[m.grade]+=1
+    ranked=[]
+    for s in students:
+        avg=s.average_percentage
+        if avg is not None: ranked.append({"student":s,"average":avg})
+    ranked.sort(key=lambda x:x["average"],reverse=True)
+    return render(request,"academics/dashboard.html",{
+      "student_count":students.count(),"subject_count":Subject.objects.count(),"mark_count":len(marks),
+      "average_marks":round(average,1),"pass_rate":round(pass_rate,1),"attendance_rate":round(att_rate,1),
+      "subject_labels":[x[0] for x in subject_rows],"subject_values":[x[1] for x in subject_rows],
+      "grade_labels":list(grades),"grade_values":list(grades.values()),"top_students":ranked[:5],
+      "recent_marks":sorted(marks,key=lambda m:m.recorded_on,reverse=True)[:8]})
+
 @login_required
 def student_list(request):
- qs=Student.objects.all(); q=request.GET.get("q","").strip()
- if q: qs=qs.filter(Q(student_id__icontains=q)|Q(full_name__icontains=q)|Q(course__icontains=q))
- return render(request,"academics/student_list.html",{"students":qs,"q":q})
+    qs=Student.objects.all(); q=request.GET.get("q","").strip(); semester=request.GET.get("semester","").strip()
+    if q: qs=qs.filter(Q(student_id__icontains=q)|Q(full_name__icontains=q)|Q(email__icontains=q))
+    if semester.isdigit(): qs=qs.filter(semester=int(semester))
+    return render(request,"academics/student_list.html",{"students":qs,"q":q,"semester":semester})
 @login_required
 def student_create(request):
- form=StudentForm(request.POST or None)
- if form.is_valid(): form.save(); messages.success(request,"Student added."); return redirect("student_list")
- return render(request,"academics/form.html",{"form":form,"heading":"Add student"})
+    form=StudentForm(request.POST or None)
+    if form.is_valid(): form.save(); messages.success(request,"Student created."); return redirect("student_list")
+    return render(request,"academics/form.html",{"form":form,"heading":"Add student"})
 @login_required
 def student_update(request,pk):
- obj=get_object_or_404(Student,pk=pk); form=StudentForm(request.POST or None,instance=obj)
- if form.is_valid(): form.save(); messages.success(request,"Student updated."); return redirect("student_list")
- return render(request,"academics/form.html",{"form":form,"heading":"Edit student"})
+    obj=get_object_or_404(Student,pk=pk); form=StudentForm(request.POST or None,instance=obj)
+    if form.is_valid(): form.save(); messages.success(request,"Student updated."); return redirect("student_detail",pk=pk)
+    return render(request,"academics/form.html",{"form":form,"heading":"Edit student"})
+@login_required
+def student_detail(request,pk):
+    s=get_object_or_404(Student,pk=pk)
+    return render(request,"academics/student_detail.html",{"student":s,"marks":s.marks.select_related("subject"),"attendance":s.attendance_records.select_related("subject")[:30]})
+@login_required
+def student_delete(request,pk):
+    obj=get_object_or_404(Student,pk=pk)
+    if request.method=="POST": obj.delete(); messages.success(request,"Student deleted."); return redirect("student_list")
+    return render(request,"academics/confirm_delete.html",{"object":obj})
 @login_required
 def subject_list(request): return render(request,"academics/subject_list.html",{"subjects":Subject.objects.all()})
 @login_required
 def subject_create(request):
- form=SubjectForm(request.POST or None)
- if form.is_valid(): form.save(); messages.success(request,"Subject added."); return redirect("subject_list")
- return render(request,"academics/form.html",{"form":form,"heading":"Add subject"})
+    form=SubjectForm(request.POST or None)
+    if form.is_valid(): form.save(); messages.success(request,"Subject created."); return redirect("subject_list")
+    return render(request,"academics/form.html",{"form":form,"heading":"Add subject"})
 @login_required
-def assessment_list(request):
- qs=Assessment.objects.select_related("student","subject"); student=request.GET.get("student",""); subject=request.GET.get("subject","")
- if student: qs=qs.filter(student_id=student)
- if subject: qs=qs.filter(subject_id=subject)
- return render(request,"academics/assessment_list.html",{"assessments":qs,"students":Student.objects.all(),"subjects":Subject.objects.all(),"selected_student":student,"selected_subject":subject})
+def mark_list(request):
+    qs=Mark.objects.select_related("student","subject"); q=request.GET.get("q","").strip()
+    if q: qs=qs.filter(Q(student__full_name__icontains=q)|Q(student__student_id__icontains=q)|Q(subject__name__icontains=q)|Q(exam_name__icontains=q))
+    return render(request,"academics/mark_list.html",{"marks":qs,"q":q})
 @login_required
-def assessment_create(request):
- form=AssessmentForm(request.POST or None)
- if form.is_valid(): form.save(); messages.success(request,"Assessment marks recorded."); return redirect("assessment_list")
- return render(request,"academics/form.html",{"form":form,"heading":"Record assessment"})
+def mark_create(request):
+    form=MarkForm(request.POST or None)
+    if form.is_valid(): form.save(); messages.success(request,"Marks recorded."); return redirect("mark_list")
+    return render(request,"academics/form.html",{"form":form,"heading":"Record marks"})
+@login_required
+def attendance_list(request): return render(request,"academics/attendance_list.html",{"records":Attendance.objects.select_related("student","subject")[:300]})
+@login_required
+def attendance_create(request):
+    form=AttendanceForm(request.POST or None)
+    if form.is_valid(): form.save(); messages.success(request,"Attendance recorded."); return redirect("attendance_list")
+    return render(request,"academics/form.html",{"form":form,"heading":"Record attendance"})
+@login_required
+def reports(request):
+    rows=[]
+    for s in Student.objects.filter(is_active=True):
+        avg=s.average_percentage; att=s.attendance_percentage
+        rows.append({"student":s,"average":avg,"attendance":att,"result":"Pass" if avg is not None and avg>=40 else ("Fail" if avg is not None else "No marks")})
+    rows.sort(key=lambda r:(r["average"] is not None,r["average"] or 0),reverse=True)
+    return render(request,"academics/reports.html",{"rows":rows})
 @login_required
 def export_csv(request):
- qs=Assessment.objects.select_related("student","subject"); student=request.GET.get("student",""); subject=request.GET.get("subject","")
- if student: qs=qs.filter(student_id=student)
- if subject: qs=qs.filter(subject_id=subject)
- res=HttpResponse(content_type="text/csv; charset=utf-8"); res["Content-Disposition"]='attachment; filename="student_performance_report.csv"'; w=csv.writer(res)
- w.writerow(["Student ID","Student Name","Course","Semester","Subject Code","Subject","Assessment","Date","Marks","Maximum Marks","Percentage","Grade","Result"])
- for a in qs: w.writerow([a.student.student_id,a.student.full_name,a.student.course,a.student.semester,a.subject.code,a.subject.name,a.assessment_name,a.assessment_date.isoformat(),a.marks_obtained,a.subject.max_marks,a.percentage,a.grade,"Pass" if a.passed else "Fail"])
- return res
+    response=HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"]='attachment; filename="student_performance_report.csv"'
+    writer=csv.writer(response); writer.writerow(["Student ID","Student Name","Course","Semester","Average Percentage","Attendance Percentage","Result"])
+    for s in Student.objects.filter(is_active=True):
+        avg=s.average_percentage; att=s.attendance_percentage
+        result="Pass" if avg is not None and avg>=40 else ("Fail" if avg is not None else "No marks")
+        writer.writerow([s.student_id,s.full_name,s.course,s.semester,avg if avg is not None else "",att if att is not None else "",result])
+    return response
