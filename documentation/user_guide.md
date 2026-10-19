@@ -1,10 +1,11 @@
 # User Guide
-1. Run the development server and sign in with the superuser.
-2. Add subject code, name, maximum marks and pass marks.
-3. Add students with unique student IDs.
-4. Record student, subject, assessment name, date and marks.
-5. The system calculates percentage, grade and pass/fail from the demo thresholds.
-6. Use dashboard charts to compare subject averages and top student averages.
-7. Filter assessment records by student or subject.
-8. Export the filtered report to CSV.
-9. Use Django Admin to manage records and user accounts.
+1. Start server and sign in with the superuser account.
+2. Add subjects and configure max/pass marks.
+3. Add student profiles with unique student IDs.
+4. Record marks for a student, subject, exam and assessment.
+5. Record attendance by student, subject, date and status.
+6. Open student profiles to inspect grades and attendance.
+7. Use dashboard charts for aggregate performance.
+8. Open Reports and export CSV for spreadsheet analysis.
+9. Use Django Admin for further record management.
+Use synthetic student data in screenshots and demonstrations.
